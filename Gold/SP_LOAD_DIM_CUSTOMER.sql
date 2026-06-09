@@ -1,0 +1,191 @@
+CREATE OR REPLACE PROCEDURE GOLD.UTILS.SP_LOAD_DIM_CUSTOMER()
+RETURNS STRING
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+$$
+DECLARE
+
+    V_JOB_ID STRING DEFAULT UUID_STRING();
+    V_JOB_NAME STRING DEFAULT 'LOAD_DIM_CUSTOMER';
+    V_LAYER_NAME STRING DEFAULT 'GOLD';
+    V_STATUS STRING;
+    V_START_TIME TIMESTAMP;
+    V_END_TIME TIMESTAMP;
+    V_ROWS_PROCESSED NUMBER DEFAULT 0;
+    V_ROWS_INSERTED NUMBER DEFAULT 0;
+    V_ROWS_UPDATED NUMBER DEFAULT 0;
+    V_ROWS_FAILED NUMBER DEFAULT 0;
+    V_ERROR_MESSAGE STRING;
+
+BEGIN
+
+    V_START_TIME := CURRENT_TIMESTAMP();
+    V_STATUS := 'STARTED';
+
+    -- AUDIT START ENTRY
+    INSERT INTO GOLD.FINANCE.AUDIT_JOB_LOG
+    (
+        JOB_ID,
+        JOB_NAME,
+        LAYER_NAME,
+        SOURCE_OBJECT,
+        TARGET_OBJECT,
+        START_TIME,
+        JOB_STATUS
+    )
+    VALUES
+    (
+        :V_JOB_ID,
+        :V_JOB_NAME,
+        :V_LAYER_NAME,
+        'SILVER.FINANCE.CUSTOMERS',
+        'GOLD.FINANCE.DIM_CUSTOMER',
+        :V_START_TIME,
+        :V_STATUS
+    );
+
+    -- NULL HANDLING
+    CREATE OR REPLACE TEMP TABLE GOLD.FINANCE.TMP_CUSTOMERS AS
+    SELECT
+        CUSTOMER_ID,
+        COALESCE(CUSTOMER_TYPE, 'UNKNOWN') AS CUSTOMER_TYPE,
+        CASE
+            WHEN CUSTOMER_TYPE = 'INDIVIDUAL'
+            THEN CONCAT(COALESCE(FIRST_NAME, ''),' ',COALESCE(LAST_NAME, ''))
+            ELSE COALESCE(ORGANIZATION_NAME, 'UNKNOWN')
+        END AS CUSTOMER_DISPLAY_NAME,
+        COALESCE(EMAIL, 'NA') AS EMAIL,
+        COALESCE(PHONE_NUMBER, 'NA') AS PHONE_NUMBER,
+        COALESCE(TAX_IDENTIFIER, 'NA') AS TAX_IDENTIFIER,
+        COALESCE(RISK_PROFILE, 'LOW') AS RISK_PROFILE,
+        COALESCE(KYC_STATUS, 'PENDING') AS KYC_STATUS,
+        MD5(CONCAT(COALESCE(CUSTOMER_ID, ''),'|',COALESCE(EMAIL, ''))) AS RECORD_HASH
+    FROM SILVER.FINANCE.CUSTOMERS;
+    -- WHERE DQ_STATUS = 'VALID'; -- not required as there will be only VALID records in the SILVER table
+
+    -- ROWS PROCESSED
+    SELECT COUNT(*) INTO :V_ROWS_PROCESSED FROM GOLD.FINANCE.TMP_CUSTOMERS;
+
+    -- SCD TYPE 2 - EXPIRE OLD RECORDS
+    UPDATE GOLD.FINANCE.DIM_CUSTOMER T
+    SET
+        EFFECTIVE_END_DATE = CURRENT_DATE - 1,
+        IS_CURRENT = FALSE
+    FROM GOLD.FINANCE.TMP_CUSTOMERS S
+    WHERE T.CUSTOMER_ID = S.CUSTOMER_ID
+      AND T.IS_CURRENT = TRUE
+      AND T.RECORD_HASH <> S.RECORD_HASH;
+
+    V_ROWS_UPDATED := SQLROWCOUNT;
+
+    -- INSERT NEW RECORDS
+    INSERT INTO GOLD.FINANCE.DIM_CUSTOMER
+    (
+        CUSTOMER_ID,
+        CUSTOMER_TYPE,
+        CUSTOMER_DISPLAY_NAME,
+        EMAIL,
+        PHONE_NUMBER,
+        TAX_IDENTIFIER,
+        RISK_PROFILE,
+        KYC_STATUS,
+        EFFECTIVE_START_DATE,
+        EFFECTIVE_END_DATE,
+        IS_CURRENT,
+        RECORD_HASH
+    )
+    SELECT
+        S.CUSTOMER_ID,
+        S.CUSTOMER_TYPE,
+        S.CUSTOMER_DISPLAY_NAME,
+        S.EMAIL,
+        S.PHONE_NUMBER,
+        S.TAX_IDENTIFIER,
+        S.RISK_PROFILE,
+        S.KYC_STATUS,
+        CURRENT_DATE,
+        null,
+        TRUE,
+        S.RECORD_HASH
+    FROM GOLD.FINANCE.TMP_CUSTOMERS S
+    LEFT JOIN GOLD.FINANCE.DIM_CUSTOMER T
+           ON S.CUSTOMER_ID = T.CUSTOMER_ID
+          AND T.IS_CURRENT = TRUE
+    WHERE T.CUSTOMER_ID IS NULL
+       OR T.RECORD_HASH <> S.RECORD_HASH;
+
+    V_ROWS_INSERTED := SQLROWCOUNT;
+
+    -- AUDIT SUCCESS UPDATE
+    V_END_TIME := CURRENT_TIMESTAMP();
+    V_STATUS := 'SUCCESS';
+
+    UPDATE GOLD.FINANCE.AUDIT_JOB_LOG
+    SET
+        END_TIME = :V_END_TIME,
+        ROWS_PROCESSED = :V_ROWS_PROCESSED,
+        ROWS_INSERTED = :V_ROWS_INSERTED,
+        ROWS_UPDATED = :V_ROWS_UPDATED,
+        ROWS_FAILED = :V_ROWS_FAILED,
+        JOB_STATUS = :V_STATUS
+    WHERE JOB_ID = :V_JOB_ID;
+
+    -- SUCCESS EMAIL NOTIFICATION	
+	CALL SYSTEM$SEND_EMAIL(
+        'finance_email_notification',
+        'kgirija@defteam.co',
+        'SUCCESS: ' || :V_JOB_NAME,
+        'Job Name: ' || :V_JOB_NAME || '\n' ||
+        'Job ID: ' || :V_JOB_ID || '\n' ||
+        'Layer: ' || :V_LAYER_NAME || '\n' ||
+        'Status: ' || :V_STATUS || '\n' ||
+        'Rows Processed: ' || :V_ROWS_PROCESSED || '\n' ||
+        'Rows Inserted: ' || :V_ROWS_INSERTED || '\n' ||
+        'Rows Rejected: ' || :V_ROWS_FAILED || '\n' ||
+        'Execution Time: ' || CURRENT_TIMESTAMP()
+    );
+
+    RETURN 'SUCCESS';
+
+EXCEPTION
+
+    WHEN OTHER THEN
+
+        V_ERROR_MESSAGE := SQLERRM;
+        V_END_TIME := CURRENT_TIMESTAMP();
+		V_STATUS := 'FAILED';
+        --V_ROWS_FAILED := 1;
+
+        -- AUDIT FAILURE UPDATE
+        UPDATE GOLD.FINANCE.AUDIT_JOB_LOG
+        SET
+            END_TIME = :V_END_TIME,
+            -- ROWS_PROCESSED = :V_ROWS_PROCESSED,
+            -- ROWS_INSERTED = :V_ROWS_INSERTED,
+            -- ROWS_UPDATED = :V_ROWS_UPDATED,
+            -- ROWS_FAILED = :V_ROWS_FAILED,
+            JOB_STATUS = 'FAILED',
+            ERROR_MESSAGE = :V_ERROR_MESSAGE
+        WHERE JOB_ID = :V_JOB_ID;
+
+        -- FAILURE EMAIL
+         CALL SYSTEM$SEND_EMAIL(
+            'finance_email_notification',
+            'kgirija@defteam.co',
+            'FAILED: ' || :V_JOB_NAME,
+            'Job Name: ' || :V_JOB_NAME || '\n' ||
+            'Job ID: ' || :V_JOB_ID || '\n' ||
+            'Layer: ' || :V_LAYER_NAME || '\n' ||
+            'Status: ' || :V_STATUS || '\n' ||
+           -- 'Rows Processed: ' || :V_ROWS_PROCESSED || '\n' ||
+           -- 'Rows Inserted: ' || :V_ROWS_INSERTED || '\n' ||
+           -- 'Rows Rejected: ' || :V_ROWS_FAILED || '\n' ||
+            'Execution Time: ' || CURRENT_TIMESTAMP() || '\n' ||
+            'Error Message: ' || :V_ERROR_MESSAGE
+        );
+
+        RETURN 'FAILED: ' || :V_ERROR_MESSAGE;
+
+END;
+$$;

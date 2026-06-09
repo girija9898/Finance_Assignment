@@ -1,0 +1,204 @@
+CREATE OR REPLACE PROCEDURE GOLD.UTILS.SP_LOAD_DIM_SECURITY()
+RETURNS STRING
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+$$
+DECLARE
+
+    V_JOB_ID STRING DEFAULT UUID_STRING();
+    V_JOB_NAME STRING DEFAULT 'SP_LOAD_DIM_SECURITY';
+	V_LAYER_NAME STRING DEFAULT 'GOLD';
+    V_STATUS STRING;
+    V_START_TIME TIMESTAMP;
+    V_END_TIME TIMESTAMP;
+    V_ROWS_PROCESSED NUMBER DEFAULT 0;
+    V_ROWS_INSERTED NUMBER DEFAULT 0;
+    V_ROWS_UPDATED NUMBER DEFAULT 0;
+    V_ROWS_FAILED NUMBER DEFAULT 0;
+    V_ERROR_MESSAGE STRING;
+
+BEGIN
+
+    -- START TIME
+    V_START_TIME := CURRENT_TIMESTAMP();
+	V_STATUS := 'STARTED';
+    
+    -- AUDIT START ENTRY
+	INSERT INTO GOLD.FINANCE.AUDIT_JOB_LOG
+    (
+        JOB_ID,
+        JOB_NAME,
+        LAYER_NAME,
+        SOURCE_OBJECT,
+        TARGET_OBJECT,
+        START_TIME,
+        JOB_STATUS
+    )
+    VALUES
+    (
+        :V_JOB_ID,
+        :V_JOB_NAME,
+        :V_LAYER_NAME,
+        'SILVER.FINANCE.SECURITIES',
+        'GOLD.FINANCE.DIM_SECURITY',
+        :V_START_TIME,
+        :V_STATUS
+    );
+
+    -- SOURCE PREPARATION WITH NULL HANDLING
+    CREATE OR REPLACE TEMP TABLE GOLD.FINANCE.TMP_SECURITIES AS
+    SELECT
+
+        COALESCE(SECURITY_ID, 'UNKNOWN') AS SECURITY_ID,
+        COALESCE(SECURITY_SYMBOL, 'UNKNOWN') AS SECURITY_SYMBOL,
+        COALESCE(SECURITY_NAME, 'UNKNOWN') AS SECURITY_NAME,
+        COALESCE(ISIN_CODE, 'UNKNOWN') AS ISIN_CODE,
+        COALESCE(SECURITY_TYPE, 'UNKNOWN') AS SECURITY_TYPE,
+        COALESCE(ASSET_CLASS, 'UNKNOWN') AS ASSET_CLASS,
+        COALESCE(EXCHANGE_CODE, 'UNKNOWN') AS EXCHANGE_CODE,
+        COALESCE(CURRENCY, 'USD') AS CURRENCY,
+        COALESCE(FACE_VALUE, 0) AS FACE_VALUE,
+        COALESCE(COUPON_RATE, 0) AS COUPON_RATE,
+        MATURITY_DATE,
+        MD5(
+            CONCAT(
+                COALESCE(SECURITY_ID, ''),
+                '|',
+                COALESCE(ISIN_CODE, ''),
+                '|',
+                COALESCE(EXCHANGE_CODE, '')
+            )
+        ) AS RECORD_HASH
+    FROM SILVER.FINANCE.SECURITIES;
+    
+    -- ROWS PROCESSED
+    SELECT COUNT(*) INTO :V_ROWS_PROCESSED FROM GOLD.FINANCE.TMP_SECURITIES;
+
+	-- SCD TYPE 2 - EXPIRE EXISTING RECORDS
+    UPDATE GOLD.FINANCE.DIM_SECURITY T
+    SET
+        EFFECTIVE_END_DATE = CURRENT_DATE - 1,
+        IS_CURRENT = FALSE
+    FROM GOLD.FINANCE.TMP_SECURITIES S
+    WHERE T.SECURITY_ID = S.SECURITY_ID
+      AND T.IS_CURRENT = TRUE
+      AND T.RECORD_HASH <> S.RECORD_HASH;
+
+    V_ROWS_UPDATED := SQLROWCOUNT;
+    
+    -- INSERT NEW / CHANGED RECORDS
+    INSERT INTO GOLD.FINANCE.DIM_SECURITY
+    (
+        SECURITY_ID,
+        SECURITY_SYMBOL,
+        SECURITY_NAME,
+        ISIN_CODE,
+        SECURITY_TYPE,
+        ASSET_CLASS,
+        EXCHANGE_CODE,
+        CURRENCY,
+        FACE_VALUE,
+        COUPON_RATE,
+        MATURITY_DATE,
+        EFFECTIVE_START_DATE,
+        EFFECTIVE_END_DATE,
+        IS_CURRENT,
+        RECORD_HASH
+    )
+    SELECT
+        S.SECURITY_ID,
+        S.SECURITY_SYMBOL,
+        S.SECURITY_NAME,
+        S.ISIN_CODE,
+        S.SECURITY_TYPE,
+        S.ASSET_CLASS,
+        S.EXCHANGE_CODE,
+        S.CURRENCY,
+        S.FACE_VALUE,
+        S.COUPON_RATE,
+        S.MATURITY_DATE,
+        CURRENT_DATE,
+        null,
+        TRUE,
+        S.RECORD_HASH
+    FROM GOLD.FINANCE.TMP_SECURITIES S
+    LEFT JOIN GOLD.FINANCE.DIM_SECURITY T
+           ON S.SECURITY_ID = T.SECURITY_ID
+          AND T.IS_CURRENT = TRUE
+    WHERE T.SECURITY_ID IS NULL
+       OR T.RECORD_HASH <> S.RECORD_HASH;
+
+    V_ROWS_INSERTED := SQLROWCOUNT;
+
+    -- FAILED ROWS
+    --V_ROWS_FAILED := 0;
+
+    -- END TIME
+    V_END_TIME := CURRENT_TIMESTAMP();
+	V_STATUS := 'SUCCESS';
+
+    -- AUDIT SUCCESS UPDATE
+    UPDATE GOLD.FINANCE.AUDIT_JOB_LOG
+    SET
+        END_TIME = :V_END_TIME,
+        ROWS_PROCESSED = :V_ROWS_PROCESSED,
+        ROWS_INSERTED = :V_ROWS_INSERTED,
+        ROWS_UPDATED = :V_ROWS_UPDATED,
+        ROWS_FAILED = :V_ROWS_FAILED,
+        JOB_STATUS = :V_STATUS
+    WHERE JOB_ID = :V_JOB_ID;
+
+    -- SUCCESS EMAIL NOTIFICATION
+    CALL SYSTEM$SEND_EMAIL(
+        'finance_email_notification',
+        'kgirija@defteam.co',
+        'SUCCESS: ' || :V_JOB_NAME,
+        'Job Name: ' || :V_JOB_NAME || '\n' ||
+        'Job ID: ' || :V_JOB_ID || '\n' ||
+        'Layer: ' || :V_LAYER_NAME || '\n' ||
+        'Status: ' || :V_STATUS || '\n' ||
+        'Rows Processed: ' || :V_ROWS_PROCESSED || '\n' ||
+        'Rows Inserted: ' || :V_ROWS_INSERTED || '\n' ||
+        'Rows Rejected: ' || :V_ROWS_FAILED || '\n' ||
+        'Execution Time: ' || CURRENT_TIMESTAMP()
+    );
+
+    RETURN 'SUCCESS';
+
+EXCEPTION
+
+    WHEN OTHER THEN
+
+        V_ERROR_MESSAGE := SQLERRM;
+        V_END_TIME := CURRENT_TIMESTAMP();
+		V_STATUS := 'FAILED';
+
+        -- FAILED ROWS CALCULATION
+        --V_ROWS_FAILED := V_ROWS_PROCESSED - (V_ROWS_INSERTED + V_ROWS_UPDATED);
+
+        -- AUDIT FAILURE UPDATE
+        UPDATE GOLD.FINANCE.AUDIT_JOB_LOG
+        SET
+            END_TIME = :V_END_TIME,
+            JOB_STATUS = :V_STATUS,
+            ERROR_MESSAGE = :V_ERROR_MESSAGE
+        WHERE JOB_ID = :V_JOB_ID;
+
+        -- FAILURE EMAIL NOTIFICATION
+        CALL SYSTEM$SEND_EMAIL(
+            'finance_email_notification',
+            'kgirija@defteam.co',
+            'FAILED: ' || :V_JOB_NAME,
+            'Job Name: ' || :V_JOB_NAME || '\n' ||
+            'Job ID: ' || :V_JOB_ID || '\n' ||
+            'Layer: ' || :V_LAYER_NAME || '\n' ||
+            'Status: ' || :V_STATUS || '\n' ||
+            'Execution Time: ' || CURRENT_TIMESTAMP() || '\n' ||
+            'Error Message: ' || :V_ERROR_MESSAGE
+        );
+
+        RETURN 'FAILED: ' || :V_ERROR_MESSAGE;
+
+END;
+$$;

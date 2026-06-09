@@ -1,0 +1,232 @@
+CREATE OR REPLACE PROCEDURE GOLD.UTILS.SP_LOAD_FACT_TRADE()
+RETURNS STRING
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+$$
+DECLARE
+
+    V_JOB_ID STRING DEFAULT UUID_STRING();
+    V_JOB_NAME STRING DEFAULT 'SP_LOAD_FACT_TRADE';
+    V_LAYER_NAME STRING DEFAULT 'GOLD';
+    V_STATUS STRING;
+    V_START_TIME TIMESTAMP;
+    V_END_TIME TIMESTAMP;
+    V_ROWS_PROCESSED NUMBER DEFAULT 0;
+    V_ROWS_INSERTED NUMBER DEFAULT 0;
+    V_ROWS_UPDATED NUMBER DEFAULT 0;
+    V_ROWS_FAILED NUMBER DEFAULT 0;
+    V_ERROR_MESSAGE STRING;
+
+BEGIN
+
+    -- START TIME
+    V_START_TIME := CURRENT_TIMESTAMP();
+    V_STATUS := 'STARTED';
+    
+    -- AUDIT START ENTRY
+    INSERT INTO GOLD.FINANCE.AUDIT_JOB_LOG
+    (
+        JOB_ID,
+        JOB_NAME,
+        LAYER_NAME,
+        SOURCE_OBJECT,
+        TARGET_OBJECT,
+        START_TIME,
+        JOB_STATUS
+    )
+    VALUES
+    (
+        :V_JOB_ID,
+        :V_JOB_NAME,
+        :V_LAYER_NAME,
+        'SILVER.FINANCE.TRADES',
+        'GOLD.FINANCE.FACT_TRADE',
+        :V_START_TIME,
+        :V_STATUS
+    );
+
+    -- NULL HANDLING
+    CREATE OR REPLACE TEMP TABLE GOLD.FINANCE.TMP_FACT_TRADE AS
+    SELECT
+        T.TRADE_ID,
+        COALESCE(DA.ACCOUNT_SK, -1) AS ACCOUNT_SK,
+        COALESCE(DC.CUSTOMER_SK, -1) AS CUSTOMER_SK,
+        COALESCE(DS.SECURITY_SK, -1) AS SECURITY_SK,
+        CAST(T.TRADE_DATE AS DATE) AS TRADE_DATE,
+        T.SETTLEMENT_DATE,
+        COALESCE(T.TRADE_TYPE, 'UNKNOWN') AS TRADE_TYPE,
+        COALESCE(T.QUANTITY, 0) AS QUANTITY,
+        COALESCE(T.TRADE_PRICE, 0) AS TRADE_PRICE,
+        
+        -- CALCULATED FIELDS
+        COALESCE(T.QUANTITY, 0) * COALESCE(T.TRADE_PRICE, 0) AS GROSS_TRADE_AMOUNT,
+        (COALESCE(T.QUANTITY, 0) * COALESCE(T.TRADE_PRICE, 0)) * COALESCE(T.BROKERAGE_RATE, 0) AS BROKERAGE_AMOUNT,
+        (COALESCE(T.QUANTITY, 0) * COALESCE(T.TRADE_PRICE, 0)) * COALESCE(T.TAX_RATE, 0) AS TAX_AMOUNT,
+        COALESCE(T.EXCHANGE_FEE, 0) AS EXCHANGE_FEE,
+        
+        CASE -- NET TRADE AMOUNT
+        
+            WHEN UPPER(T.TRADE_TYPE) = 'BUY'
+            THEN
+                (COALESCE(T.QUANTITY, 0) * COALESCE(T.TRADE_PRICE, 0)) +
+                ((cOALESCE(T.QUANTITY, 0) * COALESCE(T.TRADE_PRICE, 0)) * COALESCE(T.BROKERAGE_RATE, 0)) +
+                ((COALESCE(T.QUANTITY, 0) * COALESCE(T.TRADE_PRICE, 0)) * COALESCE(T.TAX_RATE, 0)) +
+                COALESCE(T.EXCHANGE_FEE, 0)
+                
+            WHEN UPPER(T.TRADE_TYPE) = 'SELL'
+            THEN
+                (COALESCE(T.QUANTITY, 0) * COALESCE(T.TRADE_PRICE, 0)) -
+                ((COALESCE(T.QUANTITY, 0) * COALESCE(T.TRADE_PRICE, 0)) * COALESCE(T.BROKERAGE_RATE, 0)) -
+                ((COALESCE(T.QUANTITY, 0) * COALESCE(T.TRADE_PRICE, 0)) * COALESCE(T.TAX_RATE, 0)) -
+                COALESCE(T.EXCHANGE_FEE, 0)
+                
+            ELSE 0
+        END AS NET_TRADE_AMOUNT,
+
+        CASE -- Signed_Quantity
+        
+            WHEN UPPER(T.TRADE_TYPE) = 'BUY'
+            THEN COALESCE(T.QUANTITY, 0)
+
+            WHEN UPPER(T.TRADE_TYPE) = 'SELL'
+            THEN COALESCE(T.QUANTITY, 0) * -1
+
+            ELSE 0
+            
+        END AS SIGNED_QUANTITY,
+
+        COALESCE(T.TRADE_CURRENCY, 'USD') AS TRADE_CURRENCY,
+        COALESCE(T.TRADE_STATUS, 'PENDING') AS TRADE_STATUS,
+        CURRENT_TIMESTAMP() AS LOAD_TIMESTAMP
+
+    FROM SILVER.FINANCE.TRADES T
+
+    LEFT JOIN GOLD.FINANCE.DIM_ACCOUNT DA
+           ON T.ACCOUNT_ID = DA.ACCOUNT_ID
+          AND DA.IS_CURRENT = TRUE
+
+    LEFT JOIN GOLD.FINANCE.DIM_CUSTOMER DC
+           ON DA.CUSTOMER_ID = DC.CUSTOMER_ID
+          AND DC.IS_CURRENT = TRUE
+
+    LEFT JOIN GOLD.FINANCE.DIM_SECURITY DS
+           ON T.SECURITY_ID = DS.SECURITY_ID
+          AND DS.IS_CURRENT = TRUE;
+          
+    -- ROWS PROCESSED
+    SELECT COUNT(*) INTO :V_ROWS_PROCESSED FROM GOLD.FINANCE.TMP_FACT_TRADE;
+
+    -- INSERT INTO FACT TABLE
+    INSERT INTO GOLD.FINANCE.FACT_TRADE
+    (
+        TRADE_ID,
+        ACCOUNT_SK,
+        CUSTOMER_SK,
+        SECURITY_SK,
+        TRADE_DATE,
+        SETTLEMENT_DATE,
+        TRADE_TYPE,
+        QUANTITY,
+        TRADE_PRICE,
+        GROSS_TRADE_AMOUNT,
+        BROKERAGE_AMOUNT,
+        TAX_AMOUNT,
+        EXCHANGE_FEE,
+        NET_TRADE_AMOUNT,
+        SIGNED_QUANTITY,
+        TRADE_CURRENCY,
+        TRADE_STATUS,
+        LOAD_TIMESTAMP
+    )
+    SELECT
+        T.TRADE_ID,
+        T.ACCOUNT_SK,
+        T.CUSTOMER_SK,
+        T.SECURITY_SK,
+        T.TRADE_DATE,
+        T.SETTLEMENT_DATE,
+        T.TRADE_TYPE,
+        T.QUANTITY,
+        T.TRADE_PRICE,
+        T.GROSS_TRADE_AMOUNT,
+        T.BROKERAGE_AMOUNT,
+        T.TAX_AMOUNT,
+        T.EXCHANGE_FEE,
+        T.NET_TRADE_AMOUNT,
+        T.SIGNED_QUANTITY,
+        T.TRADE_CURRENCY,
+        T.TRADE_STATUS,
+        T.LOAD_TIMESTAMP
+    FROM GOLD.FINANCE.TMP_FACT_TRADE T
+    LEFT JOIN GOLD.FINANCE.FACT_TRADE F
+           ON T.TRADE_ID = F.TRADE_ID
+    WHERE F.TRADE_ID IS NULL;
+
+    V_ROWS_INSERTED := SQLROWCOUNT;
+
+    -- END TIME
+    V_END_TIME := CURRENT_TIMESTAMP();
+    V_STATUS := 'SUCCESS';
+    
+    -- AUDIT SUCCESS UPDATE
+    UPDATE GOLD.FINANCE.AUDIT_JOB_LOG
+    SET
+        END_TIME = :V_END_TIME,
+        ROWS_PROCESSED = :V_ROWS_PROCESSED,
+        ROWS_INSERTED = :V_ROWS_INSERTED,
+        ROWS_UPDATED = :V_ROWS_UPDATED,
+        ROWS_FAILED = :V_ROWS_FAILED,
+        JOB_STATUS = :V_STATUS
+    WHERE JOB_ID = :V_JOB_ID;
+
+    -- SUCCESS EMAIL NOTIFICATION
+    CALL SYSTEM$SEND_EMAIL(
+        'finance_email_notification',
+        'kgirija@defteam.co',
+        'SUCCESS: ' || :V_JOB_NAME,
+        'Job Name: ' || :V_JOB_NAME || '\n' ||
+        'Job ID: ' || :V_JOB_ID || '\n' ||
+        'Layer: ' || :V_LAYER_NAME || '\n' ||
+        'Status: ' || :V_STATUS || '\n' ||
+        'Rows Processed: ' || :V_ROWS_PROCESSED || '\n' ||
+        'Rows Inserted: ' || :V_ROWS_INSERTED || '\n' ||
+        'Rows Rejected: ' || :V_ROWS_FAILED || '\n' ||
+        'Execution Time: ' || CURRENT_TIMESTAMP()
+    );
+
+    RETURN 'SUCCESS';
+
+EXCEPTION
+
+    WHEN OTHER THEN
+
+        V_ERROR_MESSAGE := SQLERRM;
+        V_END_TIME := CURRENT_TIMESTAMP();
+        V_STATUS := 'FAILED';
+
+        -- AUDIT FAILURE UPDATE
+        UPDATE GOLD.FINANCE.AUDIT_JOB_LOG
+        SET
+            END_TIME = :V_END_TIME,
+            JOB_STATUS = :V_STATUS,
+            ERROR_MESSAGE = :V_ERROR_MESSAGE
+        WHERE JOB_ID = :V_JOB_ID;
+
+        -- FAILURE EMAIL NOTIFICATION
+        CALL SYSTEM$SEND_EMAIL(
+            'finance_email_notification',
+            'kgirija@defteam.co',
+            'FAILED: ' || :V_JOB_NAME,
+            'Job Name: ' || :V_JOB_NAME || '\n' ||
+            'Job ID: ' || :V_JOB_ID || '\n' ||
+            'Layer: ' || :V_LAYER_NAME || '\n' ||
+            'Status: ' || :V_STATUS || '\n' ||
+            'Execution Time: ' || CURRENT_TIMESTAMP() || '\n' ||
+            'Error Message: ' || :V_ERROR_MESSAGE
+        );
+
+        RETURN 'FAILED: ' || :V_ERROR_MESSAGE;
+
+END;
+$$;
