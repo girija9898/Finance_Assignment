@@ -95,15 +95,15 @@ BEGIN
     CALL SYSTEM$SEND_EMAIL(
         'finance_email_notification',
         :P_EMAIL_ADDRESS,
-        'SUCCESS: ' || :P_JOB_NAME,
-        'Job Name: ' || :P_JOB_NAME || '\n' ||
-        'Job ID: ' || :V_JOB_ID || '\n' ||
-        'Layer: ' || :P_LAYER_NAME || '\n' ||
-        'Status: ' || :V_STATUS || '\n' ||
-        'Rows Processed: ' || :V_ROWS_PROCESSED || '\n' ||
-        'Rows Inserted: ' || :V_ROWS_INSERTED || '\n' ||
-        'Rows Rejected: ' || :V_ROWS_REJECTED || '\n' ||
-        'Execution Time: ' || CURRENT_TIMESTAMP()
+        'SUCCESS : ' || :P_JOB_NAME,
+        'Job Name : ' || :P_JOB_NAME || '\n' ||
+        'Job ID : ' || :V_JOB_ID || '\n' ||
+        'Layer : ' || :P_LAYER_NAME || '\n' ||
+        'Status : ' || :V_STATUS || '\n' ||
+        'Rows Processed : ' || :V_ROWS_PROCESSED || '\n' ||
+        'Rows Inserted : ' || :V_ROWS_INSERTED || '\n' ||
+        'Rows Rejected : ' || :V_ROWS_REJECTED || '\n' ||
+        'Execution Time : ' || CURRENT_TIMESTAMP()
     );
 
     RETURN 'SUCCESS';
@@ -126,16 +126,16 @@ EXCEPTION
         CALL SYSTEM$SEND_EMAIL(
             'finance_email_notification',
             :P_EMAIL_ADDRESS,
-            'FAILED: ' || :P_JOB_NAME,
-            'Job Name: ' || :P_JOB_NAME || '\n' ||
-            'Job ID: ' || :V_JOB_ID || '\n' ||
-            'Layer: ' || :P_LAYER_NAME || '\n' ||
-            'Status: ' || :V_STATUS || '\n' ||
-            'Rows Processed: ' || :V_ROWS_PROCESSED || '\n' ||
-            'Rows Inserted: ' || :V_ROWS_INSERTED || '\n' ||
-            'Rows Rejected: ' || :V_ROWS_REJECTED || '\n' ||
-            'Execution Time: ' || CURRENT_TIMESTAMP() || '\n' ||
-            'Error Message: ' || :V_ERROR_MESSAGE
+            'FAILED : ' || :P_JOB_NAME,
+            'Job Name : ' || :P_JOB_NAME || '\n' ||
+            'Job ID : ' || :V_JOB_ID || '\n' ||
+            'Layer : ' || :P_LAYER_NAME || '\n' ||
+            'Status : ' || :V_STATUS || '\n' ||
+            'Rows Processed : ' || :V_ROWS_PROCESSED || '\n' ||
+            'Rows Inserted : ' || :V_ROWS_INSERTED || '\n' ||
+            'Rows Rejected : ' || :V_ROWS_REJECTED || '\n' ||
+            'Execution Time : ' || CURRENT_TIMESTAMP() || '\n' ||
+            'Error Message : ' || :V_ERROR_MESSAGE
         );
 
         RETURN 'FAILED';
