@@ -1,6 +1,8 @@
+-- Generic bronze layer load procedure with MERGE logic / audit logging / Notifications
+
 CREATE OR REPLACE PROCEDURE BRONZE.UTILS.SP_GENERIC_BRONZE_LOAD(
-    p_table_name STRING
-    -- p_force_reload BOOLEAN DEFAULT FALSE
+    p_table_name STRING,
+    p_stream_name STRING
 )
 RETURNS STRING
 LANGUAGE SQL
@@ -101,52 +103,10 @@ BEGIN
         :v_batch_id
     );
 
-    -- GET LAST SUCCESSFUL LOAD TIME
-    SELECT COALESCE(MAX(END_TIME), '1900-01-01'::TIMESTAMP_NTZ)
-    INTO :v_last_load_time
-    FROM BRONZE.FINANCE.AUDIT_JOB_LOG
-    WHERE TARGET_OBJECT = :v_target_table
-    AND JOB_STATUS = 'SUCCESS';
-
-    -- GET RELATIVE PATH
-    v_stage_relative_path := REPLACE(v_stage_folder,'@BRONZE.FINANCE.BRONZE_STAGE/','');
-
-    -- GET FILES TO PROCESS
-    SELECT
-        LISTAGG('''' ||SPLIT_PART(RELATIVE_PATH, '/', -1)|| '''',','),
-        COUNT(*)
-    INTO
-        :v_file_list,
-        :v_has_files
-    FROM DIRECTORY(@BRONZE.FINANCE.BRONZE_STAGE)
-    WHERE RELATIVE_PATH LIKE :v_stage_relative_path || '%'
-    AND
-    (   -- p_force_reload = TRUE OR 
-		LAST_MODIFIED > :v_last_load_time -- can change as per our requirement to reload the same file like '2026-05-27 06:30:21.818'
-    )
-    AND SPLIT_PART(RELATIVE_PATH, '/', -1) NOT IN (
-        SELECT DISTINCT SOURCE_FILE_NAME
-        FROM IDENTIFIER(:v_target_table)
-    );
-
-    -- EXIT IF NO FILES
-    IF (v_has_files = 0) THEN
-    
-        UPDATE BRONZE.FINANCE.AUDIT_JOB_LOG
-        SET
-            END_TIME = CURRENT_TIMESTAMP(),
-            JOB_STATUS = 'SUCCESS',
-            ERROR_MESSAGE = 'NO NEW FILES FOUND'
-        WHERE JOB_ID = :v_job_id;
-
-        RETURN 'NO NEW FILES TO PROCESS';
-
-    END IF;
-
     -- CREATE TEMP TABLE
     v_temp_table := v_target_table || '_STG_TEMP';
-    EXECUTE IMMEDIATE
-        'CREATE OR REPLACE TEMPORARY TABLE ' || v_temp_table || ' LIKE ' || v_target_table;
+    
+    EXECUTE IMMEDIATE 'CREATE OR REPLACE TEMPORARY TABLE ' || v_temp_table || ' LIKE ' || v_target_table;
 
     -- COPY INTO TEMP TABLE
     v_copy_sql := '
@@ -173,8 +133,7 @@ BEGIN
         :v_error
     FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()));
 
-    SELECT COUNT(*) INTO :v_rows_processed
-    FROM IDENTIFIER(:v_temp_table);
+    SELECT COUNT(*) INTO :v_rows_processed FROM IDENTIFIER(:v_temp_table);
 
     -- PREPARE MERGE
     SELECT REGEXP_REPLACE(REPLACE(:v_column_list, CHR(10), ''),'\\s+','') INTO :v_cols;
@@ -199,9 +158,6 @@ BEGIN
 
     EXECUTE IMMEDIATE :v_merge_sql;
 
-    -- DROP TEMP TABLE
-    EXECUTE IMMEDIATE 'DROP TABLE IF EXISTS ' || v_temp_table;
-
     -- UPDATE AUDIT SUCCESS
     UPDATE BRONZE.FINANCE.AUDIT_JOB_LOG
     SET
@@ -212,24 +168,22 @@ BEGIN
         ROWS_FAILED = :v_rows_failed
     WHERE JOB_ID = :v_job_id;
 
-    -- CONSUMING THE STREAM, JUST TO EMPTY IT
+    /*-- CONSUMING THE STREAM, JUST TO EMPTY IT
     CREATE OR REPLACE TEMP TABLE TMP_STREAM_CONSUME AS
     SELECT * FROM BRONZE.FINANCE.STR_BRONZE_STAGE;
-    -- DROP THE TEMP TABLE
-    DROP TABLE TMP_STREAM_CONSUME;
-
+    */
     -- EMAIL SUCCESS
     v_email_subject := 'SUCCESS : ' || v_job_name;
 
-    v_email_body := 'Batch ID    : ' || v_batch_id || '\n' ||
-                    'Job Name: ' || :v_job_name || '\n' ||
-                    'Job ID: ' || :v_job_id || '\n' ||
-                    'Layer: ' || 'BRONZE' || '\n' ||
-                    'Status: ' || 'SUCCESS' || '\n' ||
-                    'Rows Loaded: ' || TO_VARCHAR(v_rows_loaded) || '\n' ||
-                    'Rows Failed: ' || TO_VARCHAR(v_rows_failed) || '\n' ||
+    v_email_body := 'Batch ID : ' || v_batch_id || '\n' ||
+                    'Job Name : ' || :v_job_name || '\n' ||
+                    'Job ID : ' || :v_job_id || '\n' ||
+                    'Layer : ' || 'BRONZE' || '\n' ||
+                    'Status : ' || 'SUCCESS' || '\n' ||
+                    'Rows Loaded : ' || TO_VARCHAR(v_rows_loaded) || '\n' ||
+                    'Rows Failed : ' || TO_VARCHAR(v_rows_failed) || '\n' ||
                     'Failed Reason : ' || NVL(v_error, 'N/A') || '\n' ||
-                    'Execution Time: ' || CURRENT_TIMESTAMP();
+                    'Execution Time : ' || CURRENT_TIMESTAMP();
                     
     CALL SYSTEM$SEND_EMAIL(
         'finance_email_notification', 
@@ -252,15 +206,15 @@ EXCEPTION
 
         v_email_subject := 'FAILED : ' || v_job_name;
 
-        v_email_body := 'Batch ID    : ' || v_batch_id || '\n' ||
-                        'Job Name: ' || :v_job_name || '\n' ||
-                        'Job ID: ' || :v_job_id || '\n' ||
-                        'Layer: ' || 'BRONZE' || '\n' ||
+        v_email_body := 'Batch ID : ' || v_batch_id || '\n' ||
+                        'Job Name : ' || :v_job_name || '\n' ||
+                        'Job ID : ' || :v_job_id || '\n' ||
+                        'Layer : ' || 'BRONZE' || '\n' ||
                         'Status: ' || 'FAILED' || '\n' ||
                         -- 'Rows Loaded: ' || TO_VARCHAR(v_rows_loaded) || '\n' ||
                         -- 'Rows Failed: ' || TO_VARCHAR(v_rows_failed) || '\n' ||
                         'Failed Reason : ' || v_err_msg || '\n' ||
-                        'Execution Time: ' || CURRENT_TIMESTAMP();
+                        'Execution Time : ' || CURRENT_TIMESTAMP();
         
         CALL SYSTEM$SEND_EMAIL(
             'finance_email_notification', 
