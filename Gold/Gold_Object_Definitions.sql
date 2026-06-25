@@ -2,9 +2,9 @@ CREATE DATABASE IF NOT EXISTS GOLD;
 USE DATABASE GOLD;
 
 CREATE SCHEMA IF NOT EXISTS FINANCE;
-USE SCHEMA FINANCE;
-
 CREATE SCHEMA IF NOT EXISTS UTILS;
+
+USE SCHEMA FINANCE;
 
 -- ==============================
 -- Table Definitions
@@ -25,6 +25,7 @@ CREATE TABLE gold.finance.dim_customer (
     is_current BOOLEAN, 
     record_hash STRING 
 ); 
+
 -- DIM_ACCOUNT table
 CREATE TABLE gold.finance.dim_account ( 
     account_sk INT AUTOINCREMENT, 
@@ -42,6 +43,7 @@ CREATE TABLE gold.finance.dim_account (
     is_current BOOLEAN, 
     record_hash STRING 
 ); 
+
 -- DIM_SEDURITY table
 CREATE TABLE gold.finance.dim_security ( 
     security_sk INT AUTOINCREMENT, 
@@ -61,6 +63,7 @@ CREATE TABLE gold.finance.dim_security (
     is_current BOOLEAN, 
     record_hash STRING 
 ); 
+
 -- FACT_TRADE table
 CREATE TABLE gold.finance.fact_trade ( 
     trade_sk INT AUTOINCREMENT, 
@@ -83,6 +86,7 @@ CREATE TABLE gold.finance.fact_trade (
     trade_status STRING, 
     load_timestamp TIMESTAMP 
 ); 
+
 -- FACT_CASH_TRANSACTION table
 CREATE TABLE gold.finance.fact_cash_transaction ( 
     cash_transaction_sk INT AUTOINCREMENT, 
@@ -99,6 +103,22 @@ CREATE TABLE gold.finance.fact_cash_transaction (
     transaction_status STRING, 
     load_timestamp TIMESTAMP 
 ); 
+-- FACT_MARKET_PRICE
+create or replace TABLE gold.FINANCE.FACT_MARKET_PRICE (
+    market_price_sk INT AUTOINCREMENT, 
+    PRICE_ID VARCHAR(255),
+    SECURITY_SK VARCHAR(255),
+    POSITION_DATE DATE,
+    OPEN_PRICE NUMBER(18,6),
+    HIGH_PRICE NUMBER(18,6),
+    LOW_PRICE NUMBER(18,6),
+    CLOSE_PRICE NUMBER(18,6),
+    ADJUSTED_CLOSE_PRICE NUMBER(18,6),
+    PRICE_CURRENCY VARCHAR(255),
+    FX_RATE_TO_BASE NUMBER(18,8),
+    LOAD_TIMESTAMP TIMESTAMP
+);
+
 -- FACT_PORTFOLIO_POSITION
 CREATE TABLE gold.finance.fact_portfolio_position ( 
     portfolio_position_sk INT AUTOINCREMENT, 
@@ -138,46 +158,3 @@ create or replace TABLE GOLD.FINANCE.AUDIT_JOB_LOG (
 	CREATED_AT TIMESTAMP_NTZ(9) DEFAULT CURRENT_TIMESTAMP()
 );
 
--- ================================
--- Notebook Project
--- ================================
-CREATE OR REPLACE NOTEBOOK PROJECT GOLD.FINANCE.DIM_CUSTOMER_PROJECT
-  FROM 'snow://workspace/USER$.PUBLIC."Finance_Assessment"/versions/last'
-  COMMENT = 'Notebook project for DIM_CUSTOMER Gold layer load';
-
--- ================================
--- Tasks to execute notebooks
--- ================================
-CREATE OR REPLACE TASK GOLD.FINANCE.DIM_CUSTOMER_LOAD
-  WAREHOUSE = COMPUTE_WH
-  SCHEDULE = '1 MINUTE'
-  WHEN SYSTEM$STREAM_HAS_DATA('SILVER.FINANCE.SILVER_CUSTOMERS_STREAM')
-AS
-EXECUTE NOTEBOOK PROJECT GOLD.FINANCE.DIM_CUSTOMER_PROJECT
-  MAIN_FILE = 'GOLD/dim_customer.ipynb'
-  COMPUTE_POOL = 'SYSTEM_COMPUTE_POOL_CPU'
-  QUERY_WAREHOUSE = 'COMPUTE_WH'
-  RUNTIME = 'V2.2-CPU-PY3.11';
--- EXECUTE NOTEBOOK PROJECT GOLD.FINANCE.DIM_CUSTOMER_PROJECT
---   MAIN_FILE = 'GOLD/dim_customer.ipynb'
---   COMPUTE_POOL = 'COMPUTE_POOL'
---   QUERY_WAREHOUSE = 'COMPUTE_WH'
---   RUNTIME = 'V2.2-CPU-PY3.11';
---   -- EXECUTE NOTEBOOK PROJECT GOLD.FINANCE.DIM_CUSTOMER_PROJECT
-  --   MAIN_FILE = 'GOLD/dim_customer.ipynb'
-  --   COMPUTE_POOL = 'SYSTEM_COMPUTE_POOL_CPU'
-  --   QUERY_WAREHOUSE = 'COMPUTE_WH'
-  --   RUNTIME = '2.5-CPU-PY3.12';
-
-ALTER TASK GOLD.FINANCE.DIM_CUSTOMER_LOAD RESUME;
--- Error:  Notebook resource not found: failed to get image URL: not_found: (505153) No notebook runtime environment found for label: 2.5-CPU-PY3.12:vnext
-
-ALTER TASK GOLD.FINANCE.DIM_CUSTOMER_LOAD SUSPEND;
-
-show tasks;
-
-UPDATE gold.finance.DIM_CUSTOMER
-SET EMAIL='erine.white@allen.com'
-where customer_sk = 2;
-
-select count(*) from SILVER.FINANCE.SILVER_CUSTOMERS_STREAM;

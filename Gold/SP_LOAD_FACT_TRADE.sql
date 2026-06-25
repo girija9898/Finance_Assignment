@@ -70,7 +70,7 @@ BEGIN
             WHEN UPPER(T.TRADE_TYPE) = 'BUY'
             THEN
                 (COALESCE(T.QUANTITY, 0) * COALESCE(T.TRADE_PRICE, 0)) +
-                ((cOALESCE(T.QUANTITY, 0) * COALESCE(T.TRADE_PRICE, 0)) * COALESCE(T.BROKERAGE_RATE, 0)) +
+                ((COALESCE(T.QUANTITY, 0) * COALESCE(T.TRADE_PRICE, 0)) * COALESCE(T.BROKERAGE_RATE, 0)) +
                 ((COALESCE(T.QUANTITY, 0) * COALESCE(T.TRADE_PRICE, 0)) * COALESCE(T.TAX_RATE, 0)) +
                 COALESCE(T.EXCHANGE_FEE, 0)
                 
@@ -195,6 +195,8 @@ BEGIN
         'Execution Time: ' || CURRENT_TIMESTAMP()
     );
 
+    CREATE TEMPORARY TABLE  GOLD.FINANCE.Tmp_Str_Silver_Trades AS SELECT * FROM SILVER.FINANCE.STR_Silver_Trades WHERE 1=0;
+    
     RETURN 'SUCCESS';
 
 EXCEPTION

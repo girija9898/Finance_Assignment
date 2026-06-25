@@ -82,7 +82,7 @@ BEGIN
           AND DA.IS_CURRENT = TRUE
 
     LEFT JOIN GOLD.FINANCE.DIM_CUSTOMER DC
-           ON DA.CUSTOMER_ID = DC.CUSTOMER_ID
+           ON DA.CUSTOMER_ID = DC.CUSTOMER_ID --       customer_id is not there in silver cash_transactions, but is present in dim_account
           AND DC.IS_CURRENT = TRUE;
 
     -- ROWS PROCESSED
@@ -135,7 +135,7 @@ BEGIN
         END_TIME = :V_END_TIME,
         ROWS_PROCESSED = :V_ROWS_PROCESSED,
         ROWS_INSERTED = :V_ROWS_INSERTED,
-        ROWS_UPDATED = :V_ROWS_UPDATED,
+        --ROWS_UPDATED = :V_ROWS_UPDATED,
         ROWS_FAILED = :V_ROWS_FAILED,
         JOB_STATUS = :V_STATUS
     WHERE JOB_ID = :V_JOB_ID;
@@ -154,6 +154,8 @@ BEGIN
         'Rows Rejected: ' || :V_ROWS_FAILED || '\n' ||
         'Execution Time: ' || CURRENT_TIMESTAMP()
     );
+    
+    CREATE TEMPORARY TABLE  GOLD.FINANCE.Tmp_Str_Silver_CashTransactions AS SELECT * FROM SILVER.FINANCE.STR_Silver_CashTransactions WHERE 1=0;
 
     RETURN 'SUCCESS';
 

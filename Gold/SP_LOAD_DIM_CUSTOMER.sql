@@ -135,17 +135,19 @@ BEGIN
 	CALL SYSTEM$SEND_EMAIL(
         'finance_email_notification',
         'kgirija@defteam.co',
-        'SUCCESS: ' || :V_JOB_NAME,
-        'Job Name: ' || :V_JOB_NAME || '\n' ||
-        'Job ID: ' || :V_JOB_ID || '\n' ||
-        'Layer: ' || :V_LAYER_NAME || '\n' ||
-        'Status: ' || :V_STATUS || '\n' ||
-        'Rows Processed: ' || :V_ROWS_PROCESSED || '\n' ||
-        'Rows Inserted: ' || :V_ROWS_INSERTED || '\n' ||
-        'Rows Rejected: ' || :V_ROWS_FAILED || '\n' ||
-        'Execution Time: ' || CURRENT_TIMESTAMP()
+        'SUCCESS : ' || :V_JOB_NAME,
+        'Job Name : ' || :V_JOB_NAME || '\n' ||
+        'Job ID : ' || :V_JOB_ID || '\n' ||
+        'Layer : ' || :V_LAYER_NAME || '\n' ||
+        'Status : ' || :V_STATUS || '\n' ||
+        'Rows Processed : ' || :V_ROWS_PROCESSED || '\n' ||
+        'Rows Inserted : ' || :V_ROWS_INSERTED || '\n' ||
+        'Rows Rejected : ' || :V_ROWS_FAILED || '\n' ||
+        'Execution Time : ' || CURRENT_TIMESTAMP()
     );
 
+    CREATE TEMPORARY TABLE  GOLD.FINANCE.Tmp_Str_Silver_Customers AS SELECT * FROM SILVER.FINANCE.STR_Silver_Customers WHERE 1=0;
+    
     RETURN 'SUCCESS';
 
 EXCEPTION
@@ -173,16 +175,16 @@ EXCEPTION
          CALL SYSTEM$SEND_EMAIL(
             'finance_email_notification',
             'kgirija@defteam.co',
-            'FAILED: ' || :V_JOB_NAME,
-            'Job Name: ' || :V_JOB_NAME || '\n' ||
-            'Job ID: ' || :V_JOB_ID || '\n' ||
-            'Layer: ' || :V_LAYER_NAME || '\n' ||
-            'Status: ' || :V_STATUS || '\n' ||
+            'FAILED : ' || :V_JOB_NAME,
+            'Job Name : ' || :V_JOB_NAME || '\n' ||
+            'Job ID : ' || :V_JOB_ID || '\n' ||
+            'Layer : ' || :V_LAYER_NAME || '\n' ||
+            'Status : ' || :V_STATUS || '\n' ||
            -- 'Rows Processed: ' || :V_ROWS_PROCESSED || '\n' ||
            -- 'Rows Inserted: ' || :V_ROWS_INSERTED || '\n' ||
            -- 'Rows Rejected: ' || :V_ROWS_FAILED || '\n' ||
-            'Execution Time: ' || CURRENT_TIMESTAMP() || '\n' ||
-            'Error Message: ' || :V_ERROR_MESSAGE
+            'Execution Time : ' || CURRENT_TIMESTAMP() || '\n' ||
+            'Error Message : ' || :V_ERROR_MESSAGE
         );
 
         RETURN 'FAILED: ' || :V_ERROR_MESSAGE;

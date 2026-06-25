@@ -76,7 +76,7 @@ BEGIN
     -- ROWS PROCESSED
     SELECT COUNT(*) INTO :V_ROWS_PROCESSED FROM GOLD.FINANCE.TMP_ACCOUNTS;
 
-    -- SCD TYPE 2 - EXPIRE OLD RECORDS
+    -- -- SCD TYPE 2 - EXPIRE OLD RECORDS
     UPDATE GOLD.FINANCE.DIM_ACCOUNT T
     SET
         EFFECTIVE_END_DATE = CURRENT_DATE - 1,
@@ -148,16 +148,18 @@ BEGIN
     CALL SYSTEM$SEND_EMAIL(
         'finance_email_notification',
         'kgirija@defteam.co',
-        'SUCCESS: ' || :V_JOB_NAME,
-        'Job Name: ' || :V_JOB_NAME || '\n' ||
-        'Job ID: ' || :V_JOB_ID || '\n' ||
-        'Layer: ' || :V_LAYER_NAME || '\n' ||
-        'Status: ' || :V_STATUS || '\n' ||
-        'Rows Processed: ' || :V_ROWS_PROCESSED || '\n' ||
-        'Rows Inserted: ' || :V_ROWS_INSERTED || '\n' ||
-        'Rows Rejected: ' || :V_ROWS_FAILED || '\n' ||
-        'Execution Time: ' || CURRENT_TIMESTAMP()
+        'SUCCESS : ' || :V_JOB_NAME,
+        'Job Name : ' || :V_JOB_NAME || '\n' ||
+        'Job ID : ' || :V_JOB_ID || '\n' ||
+        'Layer : ' || :V_LAYER_NAME || '\n' ||
+        'Status : ' || :V_STATUS || '\n' ||
+        'Rows Processed : ' || :V_ROWS_PROCESSED || '\n' ||
+        'Rows Inserted : ' || :V_ROWS_INSERTED || '\n' ||
+        'Rows Rejected : ' || :V_ROWS_FAILED || '\n' ||
+        'Execution Time : ' || CURRENT_TIMESTAMP()
     );
+
+    CREATE TEMPORARY TABLE  GOLD.FINANCE.Tmp_Str_Silver_Accounts AS SELECT * FROM SILVER.FINANCE.STR_Silver_Accounts WHERE 1=0;
 
     RETURN 'SUCCESS';
 
@@ -184,13 +186,13 @@ EXCEPTION
         CALL SYSTEM$SEND_EMAIL(
             'finance_email_notification',
             'kgirija@defteam.co',
-            'FAILED: ' || :V_JOB_NAME,
-            'Job Name: ' || :V_JOB_NAME || '\n' ||
-            'Job ID: ' || :V_JOB_ID || '\n' ||
-            'Layer: ' || :V_LAYER_NAME || '\n' ||
-            'Status: ' || :V_STATUS || '\n' ||
-            'Execution Time: ' || CURRENT_TIMESTAMP() || '\n' ||
-            'Error Message: ' || :V_ERROR_MESSAGE
+            'FAILED : ' || :V_JOB_NAME,
+            'Job Name : ' || :V_JOB_NAME || '\n' ||
+            'Job ID : ' || :V_JOB_ID || '\n' ||
+            'Layer : ' || :V_LAYER_NAME || '\n' ||
+            'Status : ' || :V_STATUS || '\n' ||
+            'Execution Time : ' || CURRENT_TIMESTAMP() || '\n' ||
+            'Error Message : ' || :V_ERROR_MESSAGE
         );
 
         RETURN 'FAILED: ' || :V_ERROR_MESSAGE;
