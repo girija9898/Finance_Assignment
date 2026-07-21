@@ -1,4 +1,7 @@
 
+new test file - name changed
+File to be added to old commit
+
 Change from REMOTE branch
 
 Change from LOCAL branch
