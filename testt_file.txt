@@ -3,5 +3,6 @@ Change from REMOTE branch
 
 Change from LOCAL branch
 
+Change from REMOTE branch
 new test file - name changed
 File to be added to old commit
